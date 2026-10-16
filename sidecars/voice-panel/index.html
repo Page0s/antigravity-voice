@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Antigravity Voice</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/preload.js"></script>
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header class="header">
+      <div class="header-left">
+        <div class="logo-icon">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+            <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+          </svg>
+        </div>
+        <div class="title-group">
+          <h1>Voice TTS</h1>
+          <span class="subtitle">Kokoro-82M Neural Audio</span>
+        </div>
+      </div>
+      <div class="header-right">
+        <button id="btn-toggle-all-cards" class="btn btn-sm btn-ghost" title="Collapse or expand settings windows">Compact View</button>
+        <div id="status-badge" class="badge idle">Ready</div>
+      </div>
+    </header>
+
+    <!-- Visualizer & Live Monitor -->
+    <section class="card visualizer-card" data-card-id="visualizer">
+      <div class="card-header-row collapsible-header" title="Click to collapse or expand">
+        <div class="card-title-group">
+          <h2 class="card-title">Live Monitor & Transcript</h2>
+          <span class="version-pill" title="Antigravity Voice TTS v2.0.0">v2.0.0</span>
+        </div>
+        <div class="card-header-actions">
+          <div id="sentence-counter" class="sentence-counter">0 / 0</div>
+          <button class="btn-collapse-card" aria-label="Toggle section" title="Collapse / Expand">
+            <svg class="chevron-icon" viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+              <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="canvas-wrapper">
+          <canvas id="visualizer-canvas" width="480" height="80"></canvas>
+        </div>
+        <div class="caption-container">
+          <div id="current-caption" class="caption-text">Idle — Waiting for speech...</div>
+        </div>
+        <div id="transcript-segments" class="transcript-segments" aria-label="Speech segments">
+          <div class="transcript-placeholder">Speech text segments will appear here and highlight as they play. Click any segment to play from there.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Player Controls -->
+    <section class="card controls-card" data-card-id="controls">
+      <div class="card-header-row collapsible-header" title="Click to collapse or expand">
+        <h2 class="card-title">Player Controls</h2>
+        <div class="card-header-actions">
+          <span id="summary-controls" class="card-summary-pill">Vol 100%</span>
+          <button class="btn-collapse-card" aria-label="Toggle section" title="Collapse / Expand">
+            <svg class="chevron-icon" viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+              <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="playback-bar">
+          <button id="btn-prev" class="btn btn-secondary" title="Previous segment">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+              <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/>
+            </svg>
+            <span>Back</span>
+          </button>
+
+          <button id="btn-toggle-play" class="btn btn-primary" title="Play or Pause">
+            <svg id="icon-play" viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+              <path d="M8 5v14l11-7z"/>
+            </svg>
+            <svg id="icon-pause" viewBox="0 0 24 24" width="18" height="18" fill="currentColor" class="hidden">
+              <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+            </svg>
+            <span id="label-play">Play</span>
+          </button>
+
+          <button id="btn-skip" class="btn btn-secondary" title="Next segment">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+              <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/>
+            </svg>
+            <span>Next</span>
+          </button>
+
+          <button id="btn-repeat" class="btn btn-secondary" title="Repeat mode: Off">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor">
+              <path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/>
+            </svg>
+            <span id="label-repeat">Repeat: Off</span>
+          </button>
+
+          <button id="btn-stop" class="btn btn-danger" title="Stop and clear queue">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+              <path d="M6 6h12v12H6z"/>
+            </svg>
+            <span>Stop</span>
+          </button>
+
+          <button id="btn-mute" class="btn btn-icon" title="Toggle mute">
+            <svg id="icon-unmuted" viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+              <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+            </svg>
+            <svg id="icon-muted" viewBox="0 0 24 24" width="18" height="18" fill="currentColor" class="hidden">
+              <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27l4.73 4.73H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/>
+            </svg>
+          </button>
+        </div>
+
+        <div class="slider-row">
+          <label for="slider-volume">Volume</label>
+          <input type="range" id="slider-volume" min="0" max="1" step="0.05" value="1">
+          <span id="volume-val" class="slider-val">100%</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- TTS Engine & Voice Configuration -->
+    <section class="card config-card" data-card-id="config">
+      <div class="card-header-row collapsible-header" title="Click to collapse or expand">
+        <h2 class="card-title">Engine & Voice Settings</h2>
+        <div class="card-header-actions">
+          <span id="summary-config" class="card-summary-pill">Kokoro • Sky • 1.0x</span>
+          <button class="btn-collapse-card" aria-label="Toggle section" title="Collapse / Expand">
+            <svg class="chevron-icon" viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+              <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="card-body">
+        <div class="form-group">
+          <label class="form-label">TTS Engine</label>
+          <div class="radio-group">
+            <label class="radio-label">
+              <input type="radio" name="engine" value="kokoro" id="engine-kokoro" checked>
+              <span>Kokoro-82M (WebGPU / Neural)</span>
+            </label>
+            <label class="radio-label">
+              <input type="radio" name="engine" value="webspeech" id="engine-webspeech">
+              <span>Web Speech API (Instant / Offline)</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Kokoro Model Status / Loader -->
+        <div id="kokoro-status-box" class="subcard kokoro-box">
+          <div class="subcard-header">
+            <span id="kokoro-model-status">Kokoro-82M: Ready to load</span>
+            <div class="kokoro-btn-group">
+              <button id="btn-load-kokoro" class="btn btn-sm btn-outline">Load Model</button>
+              <button id="btn-unload-kokoro" class="btn btn-sm btn-danger hidden" title="Unload model from GPU/RAM memory">Unload</button>
+            </div>
+          </div>
+          <div id="kokoro-progress-container" class="progress-bar-container hidden">
+            <div id="kokoro-progress-fill" class="progress-bar-fill" style="width: 0%"></div>
+          </div>
+          <div class="kokoro-idle-row">
+            <label for="select-idle-unload" class="hint-text">Auto-unload when idle:</label>
+            <select id="select-idle-unload" class="form-select form-select-sm">
+              <option value="2">2 min</option>
+              <option value="5">5 min</option>
+              <option value="10" selected>10 min (Default)</option>
+              <option value="15">15 min</option>
+              <option value="30">30 min</option>
+              <option value="60">60 min</option>
+              <option value="0">Never</option>
+            </select>
+          </div>
+          <div id="kokoro-details" class="hint-text">WebGPU provides near-instant local neural speech synthesis.</div>
+        </div>
+
+        <!-- Voice Selector -->
+        <div class="form-group">
+          <label for="select-voice" class="form-label">Voice</label>
+          <select id="select-voice" class="form-select"></select>
+        </div>
+
+        <!-- Speed & Pitch -->
+        <div class="slider-grid">
+          <div class="slider-row">
+            <label for="slider-speed">Speed</label>
+            <input type="range" id="slider-speed" min="0.5" max="2.0" step="0.1" value="1.0">
+            <span id="speed-val" class="slider-val">1.0x</span>
+          </div>
+          <div class="slider-row">
+            <label for="slider-pitch">Pitch</label>
+            <input type="range" id="slider-pitch" min="0.5" max="1.5" step="0.1" value="1.0">
+            <span id="pitch-val" class="slider-val">1.0x</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Automation & Sanitizer Settings -->
+    <section class="card options-card" data-card-id="options">
+      <div class="card-header-row collapsible-header" title="Click to collapse or expand">
+        <h2 class="card-title">Automation & Sanitizer</h2>
+        <div class="card-header-actions">
+          <span id="summary-options" class="card-summary-pill">Auto-speak: On</span>
+          <button class="btn-collapse-card" aria-label="Toggle section" title="Collapse / Expand">
+            <svg class="chevron-icon" viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+              <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="card-body">
+        <div class="toggle-row">
+          <label class="switch">
+            <input type="checkbox" id="chk-auto-speak" checked>
+            <span class="slider round"></span>
+          </label>
+          <div class="toggle-text">
+            <span class="toggle-title">Auto-speak assistant turns</span>
+            <span class="toggle-desc">Automatically verbalize responses when agent finishes a turn</span>
+          </div>
+        </div>
+
+        <div class="toggle-row">
+          <label class="switch">
+            <input type="checkbox" id="chk-skip-code">
+            <span class="slider round"></span>
+          </label>
+          <div class="toggle-text">
+            <span class="toggle-title">Skip code blocks entirely</span>
+            <span class="toggle-desc">When disabled, code blocks are briefly summarized (e.g. "Here is JavaScript snippet")</span>
+          </div>
+        </div>
+
+        <div class="toggle-row">
+          <label class="switch">
+            <input type="checkbox" id="chk-strip-urls" checked>
+            <span class="slider round"></span>
+          </label>
+          <div class="toggle-text">
+            <span class="toggle-title">Sanitize URLs & Tables</span>
+            <span class="toggle-desc">Replace long web links with spoken domain names and omit ASCII tables</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Manual TTS Test Sandbox -->
+    <section class="card sandbox-card" data-card-id="sandbox">
+      <div class="card-header-row collapsible-header" title="Click to collapse or expand">
+        <h2 class="card-title">Manual Speech Sandbox</h2>
+        <div class="card-header-actions">
+          <button class="btn-collapse-card" aria-label="Toggle section" title="Collapse / Expand">
+            <svg class="chevron-icon" viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+              <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="card-body">
+        <textarea id="sandbox-input" class="form-textarea" rows="3" placeholder="Type or paste any text to test voice synthesis..."></textarea>
+        
+        <div class="sandbox-chips">
+          <button class="chip" data-text="Hello! Antigravity Voice sidecar is active and ready.">Greeting</button>
+          <button class="chip" data-text="I analyzed the code and found zero compilation errors.">Status</button>
+          <button class="chip" data-text="Kokoro neural speech running locally with WebGPU hardware acceleration.">Kokoro</button>
+        </div>
+
+        <div class="sandbox-actions">
+          <button id="btn-speak-sandbox" class="btn btn-primary">Speak Text</button>
+          <button id="btn-clear-sandbox" class="btn btn-secondary">Clear</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Conversation Turns & Artifacts -->
+    <section class="card turns-card" data-card-id="turns">
+      <div class="card-header-row collapsible-header" title="Click to collapse or expand">
+        <h2 class="card-title">Conversation Turns</h2>
+        <div class="card-header-actions">
+          <button id="btn-refresh-turns" class="btn btn-sm btn-ghost" title="Refresh turns from transcript">↻ Refresh</button>
+          <button class="btn-collapse-card" aria-label="Toggle section" title="Collapse / Expand">
+            <svg class="chevron-icon" viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+              <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="card-body">
+        <div class="form-group">
+          <select id="select-conversation" class="form-select form-select-sm" title="Select active or past conversation"></select>
+        </div>
+        <div id="conversation-turns-list" class="history-list turns-list">
+          <div class="empty-state">Loading conversation turns...</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Speech History -->
+    <section class="card history-card" data-card-id="history">
+      <div class="card-header-row collapsible-header" title="Click to collapse or expand">
+        <h2 class="card-title">Recent Speech History</h2>
+        <div class="card-header-actions">
+          <button id="btn-clear-history" class="btn btn-sm btn-ghost">Clear</button>
+          <button class="btn-collapse-card" aria-label="Toggle section" title="Collapse / Expand">
+            <svg class="chevron-icon" viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+              <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="card-body">
+        <div id="history-list" class="history-list">
+          <div class="empty-state">No speech history yet.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Info & User Guide -->
+    <section class="card info-card" data-card-id="info">
+      <div class="card-header-row collapsible-header" title="Click to collapse or expand">
+        <h2 class="card-title">Info &amp; User Guide</h2>
+        <div class="card-header-actions">
+          <span class="card-summary-pill">How It Works</span>
+          <button class="btn-collapse-card" aria-label="Toggle section" title="Collapse / Expand">
+            <svg class="chevron-icon" viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+              <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="card-body info-body">
+        <div class="info-block">
+          <h3 class="info-heading">How It Works</h3>
+          <p>
+            <strong>Antigravity Voice TTS (v2.0.0)</strong> connects to Antigravity's turn lifecycle via a background <code>Stop</code> hook. When an assistant finishes a response, the text is sanitized (cleaning Markdown formatting, tables, URLs, and code blocks), split into natural sentence segments, and streamed to this sidecar panel for real-time speech synthesis.
+          </p>
+        </div>
+
+        <div class="info-block">
+          <h3 class="info-heading">Using It in Conversations</h3>
+          <ul class="info-list">
+            <li><strong>Auto-Speak Live Responses:</strong> Keep <em>Auto-speak assistant turns</em> enabled in <strong>Automation &amp; Sanitizer</strong> to automatically hear new chat responses as soon as the agent finishes a turn.</li>
+            <li><strong>Interactive Segmented Reader:</strong> Below the spectrum visualizer, every sentence is numbered and highlighted as it plays. Click <strong>any segment</strong> in the reader to jump directly to that sentence.</li>
+            <li><strong>Transport &amp; Repeat Controls:</strong> Use <strong>Back</strong> and <strong>Next</strong> to step between sentences, <strong>Play / Pause</strong> to pause mid-sentence, or cycle <strong>Repeat</strong> between <em>Off</em>, <em>Repeat: 1</em> (loop current sentence), and <em>Repeat: All</em> (loop entire response).</li>
+            <li><strong>Listen to Past Conversations &amp; Artifacts:</strong> In <strong>Conversation Turns</strong>, the active chat is automatically detected (<code>★ [Current Chat]</code>), or you can pick any past conversation from the dropdown. Click <strong>Load</strong> on any turn or Markdown artifact (<code>📄 *.md</code>) to inspect its segments first, or click <strong>▶</strong> to listen immediately.</li>
+          </ul>
+        </div>
+
+        <div class="info-block">
+          <h3 class="info-heading">Engines &amp; Memory Management</h3>
+          <ul class="info-list">
+            <li><strong>Kokoro-82M (WebGPU / Neural):</strong> Runs an 82M-parameter ONNX neural voice model locally on your GPU (with automatic WASM fallback). Model weights are cached on disk after the first load.</li>
+            <li><strong>Auto-Unload &amp; Manual Unload:</strong> To save VRAM/RAM, Kokoro-82M automatically unloads after inactivity (default <strong>10 min</strong>, adjustable) or when you click <strong>Unload</strong>, and automatically reloads from disk cache in ~1–2s when needed again.</li>
+            <li><strong>Collapsible Workspace:</strong> Click any window title bar (or use <strong>Compact View</strong> at the top) to retract settings windows down to their title bars—your layout is saved automatically.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <!-- Main frontend logic (served as a classic script bundle for plugin:// compatibility) -->
+  <script src="/app.js"></script>
+</body>
+</html>
+

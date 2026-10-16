@@ -1,0 +1,12 @@
+{
+  "voice-assistant": {
+    "Stop": [
+      {
+        "type": "command",
+        "command": "node hooks/notify-tts.mjs",
+        "timeout": 30
+      }
+    ]
+  }
+}
+

@@ -1,0 +1,12 @@
+# Sidecar runtime data (persisted settings, speech history, server info)
+.data/
+sidecars/voice-panel/.data/
+
+# Dependencies
+node_modules/
+
+# OS & Editor files
+.DS_Store
+Thumbs.db
+*.log
+*.tmp

@@ -1,0 +1,31 @@
+{
+  "name": "antigravity-voice",
+  "version": "2.0.0",
+  "description": "Local neural Text-to-Speech (Kokoro-82M WebGPU) sidecar plugin for Google Antigravity with interactive segmented reader, transport & repeat controls, and conversation turn browser.",
+  "type": "module",
+  "scripts": {
+    "test": "node test/sanitizer.test.mjs"
+  },
+  "keywords": [
+    "google-antigravity",
+    "antigravity-plugin",
+    "kokoro-tts",
+    "webgpu",
+    "text-to-speech",
+    "onnx-runtime",
+    "sidecar",
+    "voice-tts",
+    "kokoro-82m",
+    "antigravity"
+  ],
+  "homepage": "https://github.com/Page0s/antigravity-voice#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Page0s/antigravity-voice.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Page0s/antigravity-voice/issues"
+  },
+  "author": "Page0s",
+  "license": "MIT"
+}
