@@ -15,7 +15,9 @@ import { processForSpeech } from './sanitizer.mjs';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = join(HERE, '..');
 const TEMP_SERVER_FILE = join(tmpdir(), 'antigravity-voice-server.json');
-const TEMP_QUEUE_FILE = join(tmpdir(), 'antigravity-voice-queue.json');
+const TEMP_QUEUE_FILE = process.env.ANTIGRAVITY_VOICE_QUEUE_FILE || join(tmpdir(), 'antigravity-voice-queue.json');
+const LAST_SENT_FILE = process.env.ANTIGRAVITY_VOICE_LAST_SENT_FILE || join(tmpdir(), 'antigravity-voice-last-sent.json');
+const SKIP_SIDECAR_HTTP = process.env.ANTIGRAVITY_VOICE_SKIP_HTTP === '1';
 
 async function main() {
   let hookOutput = { decision: 'allow' };
@@ -39,7 +41,6 @@ async function main() {
         const cleanText = processed.cleanText;
         if (cleanText) {
           // Check deduplication (prevent duplicate triggers for the same step or rapid repeats)
-          const LAST_SENT_FILE = join(tmpdir(), 'antigravity-voice-last-sent.json');
           try {
             if (existsSync(LAST_SENT_FILE)) {
               const last = JSON.parse(readFileSync(LAST_SENT_FILE, 'utf8'));
@@ -78,11 +79,13 @@ async function main() {
           enqueueMessage(speechItem);
 
           // 5. Attempt direct HTTP delivery to active sidecar server
-          const serverInfo = findActiveServer();
-          if (serverInfo && serverInfo.port) {
-            await sendToSidecar(serverInfo.port, speechItem, serverInfo.token);
-          } else {
-            console.error('[antigravity-voice hook] Sidecar offline, enqueued speech item.');
+          if (!SKIP_SIDECAR_HTTP) {
+            const serverInfo = findActiveServer();
+            if (serverInfo && serverInfo.port) {
+              await sendToSidecar(serverInfo.port, speechItem, serverInfo.token);
+            } else {
+              console.error('[antigravity-voice hook] Sidecar offline, enqueued speech item.');
+            }
           }
         }
       } else {

@@ -367,10 +367,17 @@ async function runTests() {
     }, 'Client classic-script IIFE bundle must parse with zero SyntaxErrors');
   });
 
-  // 20. Lifecycle Hook JSONL & JSON Transcript Delivery
+  // 20. Lifecycle Hook JSONL & JSON Transcript Delivery (isolated queue file — never triggers live sidecar)
   await test('JSONL & JSON transcript parsing and lifecycle hook queue delivery', () => {
     const TEST_DIR = join(tmpdir(), `voice-test-${Date.now()}`);
-    const TEMP_QUEUE_FILE = join(tmpdir(), 'antigravity-voice-queue.json');
+    const TEST_QUEUE_FILE = join(TEST_DIR, 'test-queue.json');
+    const TEST_LAST_SENT_FILE = join(TEST_DIR, 'test-last-sent.json');
+    const hookEnv = {
+      ...process.env,
+      ANTIGRAVITY_VOICE_QUEUE_FILE: TEST_QUEUE_FILE,
+      ANTIGRAVITY_VOICE_LAST_SENT_FILE: TEST_LAST_SENT_FILE,
+      ANTIGRAVITY_VOICE_SKIP_HTTP: '1',
+    };
     mkdirSync(TEST_DIR, { recursive: true });
 
     const sampleTranscriptPath = join(TEST_DIR, 'session.jsonl');
@@ -386,10 +393,11 @@ async function runTests() {
     execFileSync('node', ['hooks/notify-tts.mjs', sampleTranscriptPath], {
       cwd: process.cwd(),
       encoding: 'utf8',
+      env: hookEnv,
     });
 
-    assert(existsSync(TEMP_QUEUE_FILE), 'Queue file should be created');
-    const queue = JSON.parse(readFileSync(TEMP_QUEUE_FILE, 'utf8'));
+    assert(existsSync(TEST_QUEUE_FILE), 'Isolated queue file should be created');
+    const queue = JSON.parse(readFileSync(TEST_QUEUE_FILE, 'utf8'));
     const lastItem = queue[queue.length - 1];
     assert.strictEqual(lastItem.source, 'hook');
     assert(lastItem.text.includes('Kokoro-82M over WebGPU'), 'Text contains assistant message');
@@ -413,9 +421,10 @@ async function runTests() {
     execFileSync('node', ['hooks/notify-tts.mjs', jsonTranscriptPath], {
       cwd: process.cwd(),
       encoding: 'utf8',
+      env: hookEnv,
     });
 
-    const queue2 = JSON.parse(readFileSync(TEMP_QUEUE_FILE, 'utf8'));
+    const queue2 = JSON.parse(readFileSync(TEST_QUEUE_FILE, 'utf8'));
     const lastItem2 = queue2[queue2.length - 1];
     assert(lastItem2.text.includes('Check a link to example.com for guidance.'), 'URL sanitized to domain reference');
 
