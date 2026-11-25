@@ -5,10 +5,105 @@
 
 import { AudioQueueController } from './lib/audio-queue.js';
 import { KokoroEngine, KOKORO_VOICES } from './lib/kokoro-tts.js';
-import { chunkSentences, sanitizeText } from './lib/sanitizer.js';
+import {
+  DEFAULT_FILTER_OPTIONS,
+  OUTPUT_PROFILES,
+  formatFilterStatsSummary,
+  processForSpeech,
+  resolveFilterOptions,
+} from './lib/sanitizer.js';
 
 const sidecar = window.sidecar;
 const $ = (id) => document.getElementById(id);
+
+const THEME_STORAGE_KEY = 'antigravity-voice-theme-tokens';
+const THEME_TOKEN_NAMES = [
+  '--background',
+  '--foreground',
+  '--card',
+  '--card-border',
+  '--border',
+  '--secondary',
+  '--secondary-foreground',
+  '--muted-foreground',
+  '--primary',
+  '--primary-foreground',
+  '--accent',
+];
+
+function snapshotThemeTokens() {
+  try {
+    const style = getComputedStyle(document.documentElement);
+    const snapshot = {};
+    let count = 0;
+    for (const name of THEME_TOKEN_NAMES) {
+      const val = style.getPropertyValue(name).trim();
+      if (val) {
+        snapshot[name] = val;
+        count++;
+      }
+    }
+    if (count > 0) {
+      sessionStorage.setItem(THEME_STORAGE_KEY, JSON.stringify(snapshot));
+    }
+  } catch {}
+}
+
+function restoreThemeTokensIfMissing() {
+  try {
+    const rootStyle = document.documentElement.style;
+    const computed = getComputedStyle(document.documentElement);
+    // If the host didn't re-inject --background (e.g. after an iframe reload), restore saved tokens
+    const currentBg = computed.getPropertyValue('--background').trim();
+    const savedRaw = sessionStorage.getItem(THEME_STORAGE_KEY);
+    if (!savedRaw) return;
+    const saved = JSON.parse(savedRaw);
+    const looksResetToLight = !currentBg || /^#?fff(?:fff)?$/i.test(currentBg) || /^rgb\(255,\s*255,\s*255\)$/i.test(currentBg);
+    if (looksResetToLight && saved['--background'] && !/^#?fff(?:fff)?$/i.test(saved['--background'])) {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v) rootStyle.setProperty(k, v);
+      }
+    }
+  } catch {}
+}
+
+const SANDBOX_PRESETS = {
+  greeting: 'Hello! Antigravity Voice v2.1 is online with smart output filtering and smooth natural speech.',
+  table: `### TTS Engine Comparison
+
+| Engine | Speed | Quality | Offline |
+| :--- | :--- | :--- | :--- |
+| Kokoro-82M | ~150ms | ✅ Studio | Yes |
+| Native SAPI | Instant | Good | Yes |
+| Cloud API | 400ms | Studio | ❌ No |`,
+  symbols: `  - Semicolon (;) Skipped in Part 1: Part 1 stays strictly a–z + Space + Backspace, while the right pinky rests on its home anchor (; / Č / Ö).
+  - Error Handling & Touch Backspace: Sub-drills 1–3 (new key intro) block on error so beginners don't look down for Backspace; press Ctrl+C → Copy & Save (≥ 150ms, 1920×1080).`,
+  structured: `## Structured .md Guide
+
+- **Heading Levels** (#–######, Setext ===/---) split cleanly without breaking flow.
+  - Nested bullets and \`snake_case_vars\` stay readable and never mangle underscores.
+- [x] Fix single-word orphan cuts so sentences like the toggle only changes whether the transcript box displays the cleaner visual symbols or the exact expanded words being sent to the voice engine stay intact.
+- [ ] Switch to Room Listen mode to read every table across the room.
+
+> [!WARNING] Breaking change in \`sidecars/voice-panel/lib/sanitizer.js\` — reload panel to apply.`,
+  code: `Update \`idle_unload_minutes\` in \`sidecars/voice-panel/app.js\` and inspect the pipeline below:
+
+\`\`\`typescript
+export function processTurn(raw: string, profile: string) {
+  const filters = resolveFilterOptions({ profile });
+  const result = processForSpeech(raw, filters);
+  if (result.segments.length === 0) {
+    return null;
+  }
+  return result;
+}
+\`\`\`
+
+Then run \`npm test\` to verify all checks pass.`,
+  math: `Einstein showed that $$E = mc^2$$ and for averages we have $$\\frac{a^2 + b^2}{2} \\leq \\pi$$ while pricing stays at $50 [1][2].
+
+See documentation at https://github.com/Page0s/antigravity-voice for setup details.`,
+};
 
 // ---------------------------------------------------------------------------
 // State & Instances
@@ -27,9 +122,16 @@ let currentSettings = {
   volume: 1.0,
   skipCodeBlocks: false,
   stripUrls: true,
+  transcriptView: 'readable', // 'readable' | 'spoken'
+  outputFilters: { ...DEFAULT_FILTER_OPTIONS },
   idleUnloadMinutes: 10,
   collapsedCards: [],
 };
+
+let currentRawText = '';
+let currentTaskId = '';
+let currentFilterStats = null;
+let customRulesDebounce = null;
 
 let webSpeechVoices = [];
 let nativeSystemVoices = [];
@@ -352,6 +454,48 @@ async function unloadKokoroModel({ reason = 'manual' } = {}) {
 // Playback State Listener & Queue Coordinator
 // ---------------------------------------------------------------------------
 
+function getSegmentTextForView(seg) {
+  if (typeof seg === 'string') return seg;
+  if (!seg) return '';
+  return currentSettings.transcriptView === 'spoken'
+    ? seg.spokenText || seg.text || ''
+    : seg.displayText || seg.spokenText || seg.text || '';
+}
+
+function getBadgeStyleClass(blockType, badge) {
+  if (!badge) return '';
+  if (blockType?.startsWith('table')) return 'badge-table';
+  if (blockType?.startsWith('code')) return badge === 'DIFF' ? 'badge-diff' : 'badge-code';
+  if (blockType === 'math') return 'badge-math';
+  if (blockType === 'heading') return 'badge-heading';
+  if (blockType === 'callout' || blockType === 'quote') return 'badge-callout';
+  if (blockType === 'diagram') return 'badge-diagram';
+  return '';
+}
+
+function updateFilterStatsUI(stats) {
+  const bar = $('filter-stats-bar');
+  if (!bar) return;
+  currentFilterStats = stats || null;
+  const summary = formatFilterStatsSummary(stats);
+  if (summary) {
+    bar.textContent = summary;
+    bar.title = summary;
+    bar.classList.remove('hidden');
+  } else {
+    bar.textContent = '';
+    bar.classList.add('hidden');
+  }
+}
+
+function syncTranscriptViewToggleUI() {
+  const isSpoken = currentSettings.transcriptView === 'spoken';
+  const btnReadable = $('btn-view-readable');
+  const btnSpoken = $('btn-view-spoken');
+  if (btnReadable) btnReadable.classList.toggle('active', !isSpoken);
+  if (btnSpoken) btnSpoken.classList.toggle('active', isSpoken);
+}
+
 function renderTranscriptSegments(sentences = [], activeIndex = -1) {
   const container = $('transcript-segments');
   if (!container) return;
@@ -363,19 +507,52 @@ function renderTranscriptSegments(sentences = [], activeIndex = -1) {
   }
 
   container.innerHTML = '';
-  sentences.forEach((segText, idx) => {
+  sentences.forEach((seg, idx) => {
+    const shownText = getSegmentTextForView(seg);
+    const badge = typeof seg === 'object' ? seg.badge || '' : '';
+    const blockType = typeof seg === 'object' ? seg.blockType || 'paragraph' : 'paragraph';
+    const expandable = typeof seg === 'object' ? seg.expandable : null;
+
     const row = document.createElement('div');
     let cls = 'transcript-segment';
     if (idx === activeIndex) cls += ' active';
     else if (activeIndex >= 0 && idx < activeIndex) cls += ' spoken';
     row.className = cls;
     row.dataset.index = String(idx);
-    row.title = 'Click to play from this segment';
+    row.title =
+      currentSettings.transcriptView === 'readable' && typeof seg === 'object' && seg.spokenText !== seg.displayText
+        ? `Click to play • Spoken as: ${seg.spokenText}`
+        : 'Click to play from this segment';
+
+    const badgeHtml = badge
+      ? `<span class="segment-badge ${getBadgeStyleClass(blockType, badge)}">${escapeHtml(badge)}</span>`
+      : '';
+    const expandHtml =
+      expandable && Array.isArray(expandable.segments) && expandable.segments.length > 0
+        ? `<button type="button" class="btn-expand-segment" title="Expand and read full block aloud">${escapeHtml(expandable.label || 'Read full')} ▶</button>`
+        : '';
+
     row.innerHTML = `
       <span class="segment-num">${idx + 1}.</span>
-      <span class="segment-body">${escapeHtml(segText)}</span>
+      ${badgeHtml}
+      <span class="segment-body">${escapeHtml(shownText)}</span>
+      ${expandHtml}
     `;
+
+    const expandBtn = row.querySelector('.btn-expand-segment');
+    if (expandBtn) {
+      expandBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        refreshCurrentTaskMetadata();
+        audioQueue.ensureAudioContext();
+        if (audioQueue.expandSegmentAt(idx, { autoPlay: true })) {
+          showToast(`Expanded: ${expandable.label || 'full content'}`);
+        }
+      });
+    }
+
     row.addEventListener('click', () => {
+      refreshCurrentTaskMetadata();
       audioQueue.ensureAudioContext();
       audioQueue.jumpToSentence(idx);
     });
@@ -455,9 +632,11 @@ function setupAudioQueueListeners() {
     renderTranscriptSegments(sentences, activeIndex);
   };
 
-  audioQueue.onProgress = ({ index, activeIndex, total, text, sentences }) => {
+  audioQueue.onProgress = ({ index, activeIndex, total, text, displayText, segment, sentences }) => {
     sentenceCounter.textContent = `${index} / ${total}`;
-    currentCaption.textContent = text;
+    const captionStr =
+      currentSettings.transcriptView === 'spoken' ? text : displayText || getSegmentTextForView(segment) || text;
+    currentCaption.textContent = captionStr;
 
     const container = $('transcript-segments');
     const existingCount = container ? container.querySelectorAll('.transcript-segment').length : 0;
@@ -505,16 +684,17 @@ async function pollQueue() {
       for (const item of items) {
         ackIds.push(item.id);
 
-        const clean = sanitizeText(item.rawText || item.text, {
-          skipCodeBlocks: currentSettings.skipCodeBlocks,
-          stripUrls: currentSettings.stripUrls,
-        });
+        const rawSource = item.rawText || item.text || '';
+        const processed = processForSpeech(rawSource, currentSettings.outputFilters);
 
-        const sentences = chunkSentences(clean);
+        if (processed.segments.length > 0) {
+          currentRawText = rawSource;
+          currentTaskId = item.id;
+          updateFilterStatsUI(processed.stats);
 
-        if (sentences.length > 0) {
-          audioQueue.enqueue(sentences, {
+          audioQueue.enqueue(processed.segments, {
             id: item.id,
+            rawText: rawSource,
             engine: currentSettings.engine,
             kokoroInstance: kokoroEngine,
             kokoroVoice: currentSettings.kokoroVoice,
@@ -526,7 +706,8 @@ async function pollQueue() {
 
           addHistoryItemUI({
             id: item.id,
-            text: clean,
+            text: processed.displayText || processed.cleanText,
+            rawText: rawSource,
             source: item.source || 'hook',
             timestamp: item.timestamp || Date.now(),
           });
@@ -552,19 +733,22 @@ async function pollQueue() {
 // Conversation Turns & Artifacts Browser
 // ---------------------------------------------------------------------------
 
-function loadTurnIntoSegments(item, { autoPlay = false } = {}) {
-  const clean = sanitizeText(item.text || '', {
-    skipCodeBlocks: currentSettings.skipCodeBlocks,
-    stripUrls: currentSettings.stripUrls,
-  });
-  const sentences = chunkSentences(clean);
+function loadTurnIntoSegments(item, { autoPlay = false, silent = false } = {}) {
+  const rawSource = item.rawText || item.text || '';
+  const processed = processForSpeech(rawSource, currentSettings.outputFilters);
+  const sentences = processed.segments;
   if (sentences.length === 0) {
-    showToast('No speakable text in this item');
+    if (!silent) showToast('No speakable text with current filters');
     return;
   }
 
+  currentRawText = rawSource;
+  currentTaskId = item.id || `turn-${Date.now()}`;
+  updateFilterStatsUI(processed.stats);
+
   const metadata = {
-    id: item.id || `turn-${Date.now()}`,
+    id: currentTaskId,
+    rawText: rawSource,
     engine: currentSettings.engine,
     kokoroInstance: kokoroEngine,
     kokoroVoice: currentSettings.kokoroVoice,
@@ -590,7 +774,7 @@ function loadTurnIntoSegments(item, { autoPlay = false } = {}) {
     renderTranscriptSegments(sentences, -1);
     $('sentence-counter').textContent = `0 / ${sentences.length}`;
     $('current-caption').textContent = `Loaded ${sentences.length} segments — Click Play or any segment`;
-    showToast(`Loaded ${sentences.length} segments into reader`);
+    if (!silent) showToast(`Loaded ${sentences.length} segments into reader`);
   }
 }
 
@@ -743,20 +927,8 @@ function addHistoryItemUI(item) {
   `;
 
   div.querySelector('.btn-replay').addEventListener('click', () => {
-    const clean = sanitizeText(item.text, {
-      skipCodeBlocks: currentSettings.skipCodeBlocks,
-      stripUrls: currentSettings.stripUrls,
-    });
-    const sentences = chunkSentences(clean);
-    audioQueue.enqueue(sentences, {
-      engine: currentSettings.engine,
-      kokoroInstance: kokoroEngine,
-      kokoroVoice: currentSettings.kokoroVoice,
-      webSpeechVoice: currentSettings.webSpeechVoice,
-      rate: currentSettings.rate,
-      pitch: currentSettings.pitch,
-      onKokoroProgress: handleKokoroProgress,
-    });
+    const rawSource = item.rawText || item.text || '';
+    loadTurnIntoSegments({ id: item.id, rawText: rawSource, text: rawSource }, { autoPlay: true });
   });
 
   div.querySelector('.btn-delete-item').addEventListener('click', async () => {
@@ -792,16 +964,17 @@ async function loadHistory() {
 
     // Preload the most recent history entry's segments into the transcript reader if idle
     if (!audioQueue.currentTask && items[0]?.text) {
-      const clean = sanitizeText(items[0].text, {
-        skipCodeBlocks: currentSettings.skipCodeBlocks,
-        stripUrls: currentSettings.stripUrls,
-      });
-      const sentences = chunkSentences(clean);
-      if (sentences.length > 0) {
+      const rawSource = items[0].rawText || items[0].text;
+      const processed = processForSpeech(rawSource, currentSettings.outputFilters);
+      if (processed.segments.length > 0) {
+        currentRawText = rawSource;
+        currentTaskId = items[0].id || `history-${Date.now()}`;
+        updateFilterStatsUI(processed.stats);
         audioQueue.currentTask = {
-          id: items[0].id || `history-${Date.now()}`,
-          sentences,
+          id: currentTaskId,
+          sentences: processed.segments,
           metadata: {
+            rawText: rawSource,
             engine: currentSettings.engine,
             kokoroInstance: kokoroEngine,
             kokoroVoice: currentSettings.kokoroVoice,
@@ -811,9 +984,9 @@ async function loadHistory() {
             onKokoroProgress: handleKokoroProgress,
           },
         };
-        audioQueue.totalSentences = sentences.length;
-        renderTranscriptSegments(sentences, -1);
-        $('sentence-counter').textContent = `0 / ${sentences.length}`;
+        audioQueue.totalSentences = processed.segments.length;
+        renderTranscriptSegments(processed.segments, -1);
+        $('sentence-counter').textContent = `0 / ${processed.segments.length}`;
       }
     }
   } catch {}
@@ -852,8 +1025,145 @@ function updateCardSummaries() {
 
   const summaryOptions = $('summary-options');
   if (summaryOptions) {
-    summaryOptions.textContent = currentSettings.autoSpeak ? 'Auto-speak: On' : 'Auto-speak: Off';
+    const profileId = currentSettings.outputFilters?.profile || 'balanced';
+    const profileLabel = OUTPUT_PROFILES[profileId]?.shortLabel || 'Custom';
+    summaryOptions.textContent = `${profileLabel} • ${currentSettings.autoSpeak ? 'Auto' : 'Manual'}`;
   }
+}
+
+function syncOutputFilterUI() {
+  const f = resolveFilterOptions(currentSettings.outputFilters);
+  currentSettings.outputFilters = f;
+
+  // Keep legacy flags synced for backwards compatibility
+  currentSettings.skipCodeBlocks = f.codeBlocks === 'skip';
+  currentSettings.stripUrls = f.urls !== 'keep';
+
+  const setVal = (id, val) => {
+    const el = $(id);
+    if (el) el.value = val;
+  };
+  const setChk = (id, val) => {
+    const el = $(id);
+    if (el) el.checked = Boolean(val);
+  };
+
+  setVal('filter-tables', f.tables);
+  setVal('filter-code', f.codeBlocks);
+  setVal('filter-diagrams', f.diagrams);
+  setVal('filter-math', f.math);
+  setVal('filter-urls', f.urls);
+  setVal('filter-paths', f.filePaths);
+  setVal('filter-symbols', f.symbols);
+  setVal('filter-callouts', f.callouts);
+  setVal('filter-emojis', f.emojis);
+  setVal('filter-structure', f.structure);
+
+  setChk('chk-strip-citations', f.stripCitations);
+  setChk('chk-strip-hashes', f.stripHashesAndIds);
+  setChk('chk-humanize-ids', f.humanizeIdentifiers);
+
+  const rulesInput = $('input-custom-rules');
+  if (rulesInput && document.activeElement !== rulesInput) {
+    rulesInput.value = f.customRules || '';
+  }
+
+  document.querySelectorAll('.profile-btn[data-profile]').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.profile === f.profile);
+  });
+
+  const customBadge = $('badge-custom-profile');
+  if (customBadge) {
+    customBadge.classList.toggle('hidden', f.profile !== 'custom');
+  }
+
+  const descEl = $('profile-desc');
+  if (descEl) {
+    const preset = OUTPUT_PROFILES[f.profile];
+    descEl.textContent = preset
+      ? `${preset.description}.`
+      : 'Custom mix of output filters applied to tables, code, symbols, and Markdown blocks.';
+  }
+
+  syncTranscriptViewToggleUI();
+  updateCardSummaries();
+}
+
+function reapplyFiltersToCurrentTask({ notify = false, force = false, resumeIfPlaying = false } = {}) {
+  if (!currentRawText) {
+    if (force) showToast('No transcript loaded yet to re-apply filters');
+    return false;
+  }
+
+  const wasSpeaking = audioQueue.isProcessing && !audioQueue.isPaused;
+  const prevIndex = audioQueue.currentSentenceIndex || 0;
+
+  if (wasSpeaking && !force) {
+    if (notify) showToast('Filter saved — click ↻ Re-apply to update current speech now');
+    return false;
+  }
+
+  if (audioQueue.isProcessing) {
+    audioQueue.stop();
+  }
+
+  const processed = processForSpeech(currentRawText, currentSettings.outputFilters);
+  updateFilterStatsUI(processed.stats);
+
+  if (processed.segments.length === 0) {
+    audioQueue.currentTask = null;
+    audioQueue.totalSentences = 0;
+    renderTranscriptSegments([], -1);
+    $('sentence-counter').textContent = '0 / 0';
+    $('current-caption').textContent = 'All content filtered out by current profile';
+    if (force) showToast('Filters re-applied (all content filtered)');
+    return true;
+  }
+
+  const metadata = {
+    id: currentTaskId || `filtered-${Date.now()}`,
+    rawText: currentRawText,
+    engine: currentSettings.engine,
+    kokoroInstance: kokoroEngine,
+    kokoroVoice: currentSettings.kokoroVoice,
+    webSpeechVoice: currentSettings.webSpeechVoice,
+    rate: currentSettings.rate,
+    pitch: currentSettings.pitch,
+    onKokoroProgress: handleKokoroProgress,
+  };
+
+  if (wasSpeaking && resumeIfPlaying) {
+    const startIdx = Math.min(prevIndex, processed.segments.length - 1);
+    audioQueue.ensureAudioContext();
+    audioQueue.enqueue(processed.segments, { ...metadata, startIndex: startIdx });
+    showToast(`Filters re-applied (${processed.segments.length} segments)`);
+    return true;
+  }
+
+  audioQueue.currentTask = {
+    id: metadata.id,
+    sentences: processed.segments,
+    metadata,
+  };
+  audioQueue.currentSentenceIndex = 0;
+  audioQueue.totalSentences = processed.segments.length;
+  renderTranscriptSegments(processed.segments, -1);
+  $('sentence-counter').textContent = `0 / ${processed.segments.length}`;
+  $('current-caption').textContent = `Updated (${processed.segments.length} segments) — Click Play or any segment`;
+  if (force) {
+    showToast(`Filters re-applied (${processed.segments.length} segments)`);
+  }
+  return true;
+}
+
+function applyOutputFilterPatch(patch, { notify = false } = {}) {
+  currentSettings.outputFilters = resolveFilterOptions({
+    ...currentSettings.outputFilters,
+    ...patch,
+  });
+  syncOutputFilterUI();
+  saveSettings();
+  reapplyFiltersToCurrentTask({ notify });
 }
 
 function applyCollapsedCardsState() {
@@ -929,13 +1239,22 @@ function wireCollapsibleCards() {
 async function loadSettings() {
   try {
     const saved = await apiFetch('/api/settings');
-    currentSettings = { ...currentSettings, ...saved };
+    const resolvedFilters = saved.outputFilters
+      ? resolveFilterOptions(saved.outputFilters)
+      : resolveFilterOptions({
+          skipCodeBlocks: saved.skipCodeBlocks,
+          stripUrls: saved.stripUrls,
+        });
+    currentSettings = {
+      ...currentSettings,
+      ...saved,
+      transcriptView: saved.transcriptView === 'spoken' ? 'spoken' : 'readable',
+      outputFilters: resolvedFilters,
+    };
   } catch {}
 
   // Apply to UI elements
   $('chk-auto-speak').checked = currentSettings.autoSpeak;
-  $('chk-skip-code').checked = currentSettings.skipCodeBlocks;
-  $('chk-strip-urls').checked = currentSettings.stripUrls;
 
   if (currentSettings.engine === 'kokoro') {
     $('engine-kokoro').checked = true;
@@ -963,7 +1282,7 @@ async function loadSettings() {
   }
 
   updateVoiceDropdown();
-  updateCardSummaries();
+  syncOutputFilterUI();
   applyCollapsedCardsState();
 }
 
@@ -1136,21 +1455,115 @@ function wireEventListeners() {
     saveSettings();
   });
 
-  // Checkboxes
+  // Auto-speak toggle
   $('chk-auto-speak').addEventListener('change', (e) => {
     currentSettings.autoSpeak = e.target.checked;
     updateCardSummaries();
     saveSettings();
   });
 
-  $('chk-skip-code').addEventListener('change', (e) => {
-    currentSettings.skipCodeBlocks = e.target.checked;
-    saveSettings();
+  // Panel Refresh / Reload button (header):
+  // Click = fast in-app refresh (keeps theme & Kokoro VRAM intact)
+  // Shift+Click = full page reload (preserving host theme tokens)
+  $('btn-reload-panel')?.addEventListener('click', async (e) => {
+    if (e.shiftKey) {
+      snapshotThemeTokens();
+      audioQueue.stop();
+      window.location.reload();
+      return;
+    }
+    await loadSettings();
+    await loadConversationsAndTurns();
+    await loadHistory();
+    reapplyFiltersToCurrentTask({ force: true, resumeIfPlaying: true });
+    showToast('Panel refreshed (Shift+Click for full reload)');
   });
 
-  $('chk-strip-urls').addEventListener('change', (e) => {
-    currentSettings.stripUrls = e.target.checked;
+  // Re-apply Filters button (immediately re-processes loaded text & resumes if speaking)
+  $('btn-reapply-filters')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    reapplyFiltersToCurrentTask({ force: true, resumeIfPlaying: true });
+  });
+
+  // Transcript View Toggle: Readable (original symbols) vs Spoken (exact TTS text)
+  const setTranscriptView = (mode) => {
+    const next = mode === 'spoken' ? 'spoken' : 'readable';
+    if (currentSettings.transcriptView === next) return;
+    currentSettings.transcriptView = next;
+    syncTranscriptViewToggleUI();
     saveSettings();
+
+    if (audioQueue.currentTask?.sentences?.length) {
+      const activeIdx = audioQueue.isProcessing ? audioQueue.currentSentenceIndex : -1;
+      renderTranscriptSegments(audioQueue.currentTask.sentences, activeIdx);
+      if (activeIdx >= 0 && audioQueue.currentTask.sentences[activeIdx]) {
+        $('current-caption').textContent = getSegmentTextForView(audioQueue.currentTask.sentences[activeIdx]);
+      }
+    }
+    showToast(next === 'spoken' ? 'Transcript: Spoken TTS view' : 'Transcript: Readable view');
+  };
+
+  $('btn-view-readable')?.addEventListener('click', () => setTranscriptView('readable'));
+  $('btn-view-spoken')?.addEventListener('click', () => setTranscriptView('spoken'));
+
+  // Reading Profile Presets
+  document.querySelectorAll('.profile-btn[data-profile]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const profileId = btn.dataset.profile;
+      const preset = OUTPUT_PROFILES[profileId];
+      if (!preset) return;
+      currentSettings.outputFilters = resolveFilterOptions({
+        ...preset.options,
+        profile: profileId,
+        customRules: currentSettings.outputFilters?.customRules || '',
+      });
+      syncOutputFilterUI();
+      saveSettings();
+      reapplyFiltersToCurrentTask({ notify: true });
+      showToast(`Profile: ${preset.label}`);
+    });
+  });
+
+  // Per-Content-Type Output Filter Dropdowns
+  const filterSelectMap = [
+    ['filter-tables', 'tables'],
+    ['filter-code', 'codeBlocks'],
+    ['filter-diagrams', 'diagrams'],
+    ['filter-math', 'math'],
+    ['filter-urls', 'urls'],
+    ['filter-paths', 'filePaths'],
+    ['filter-symbols', 'symbols'],
+    ['filter-callouts', 'callouts'],
+    ['filter-emojis', 'emojis'],
+    ['filter-structure', 'structure'],
+  ];
+
+  for (const [elId, optKey] of filterSelectMap) {
+    $(elId)?.addEventListener('change', (e) => {
+      applyOutputFilterPatch({ [optKey]: e.target.value, profile: undefined }, { notify: true });
+    });
+  }
+
+  // Advanced Noise Filter Checkboxes
+  const filterCheckMap = [
+    ['chk-strip-citations', 'stripCitations'],
+    ['chk-strip-hashes', 'stripHashesAndIds'],
+    ['chk-humanize-ids', 'humanizeIdentifiers'],
+  ];
+
+  for (const [elId, optKey] of filterCheckMap) {
+    $(elId)?.addEventListener('change', (e) => {
+      applyOutputFilterPatch({ [optKey]: e.target.checked, profile: undefined }, { notify: true });
+    });
+  }
+
+  // Custom Pronunciation & Skip Rules (debounced live apply)
+  $('input-custom-rules')?.addEventListener('input', (e) => {
+    const val = e.target.value;
+    clearTimeout(customRulesDebounce);
+    customRulesDebounce = setTimeout(() => {
+      applyOutputFilterPatch({ customRules: val }, { notify: false });
+    }, 350);
   });
 
   // Sandbox
@@ -1167,8 +1580,11 @@ function wireEventListeners() {
   // Preset Chips
   document.querySelectorAll('.chip').forEach((chip) => {
     chip.addEventListener('click', () => {
-      $('sandbox-input').value = chip.dataset.text;
-      speakManualText(chip.dataset.text);
+      const presetKey = chip.dataset.preset;
+      const sample = (presetKey && SANDBOX_PRESETS[presetKey]) || chip.dataset.text || '';
+      if (!sample) return;
+      $('sandbox-input').value = sample;
+      speakManualText(sample);
     });
   });
 
@@ -1211,18 +1627,21 @@ async function speakManualText(text) {
     await audioQueue.audioCtx.resume().catch(() => {});
   }
 
-  const clean = sanitizeText(text, {
-    skipCodeBlocks: currentSettings.skipCodeBlocks,
-    stripUrls: currentSettings.stripUrls,
-  });
-
-  const sentences = chunkSentences(clean);
-  if (sentences.length === 0) return;
+  const processed = processForSpeech(text, currentSettings.outputFilters);
+  if (processed.segments.length === 0) {
+    showToast('No speakable text with current filters');
+    return;
+  }
 
   const manualId = `manual-${Date.now()}`;
+  currentRawText = text;
+  currentTaskId = manualId;
+  updateFilterStatsUI(processed.stats);
 
-  audioQueue.enqueue(sentences, {
+  audioQueue.stop();
+  audioQueue.enqueue(processed.segments, {
     id: manualId,
+    rawText: text,
     engine: currentSettings.engine,
     kokoroInstance: kokoroEngine,
     kokoroVoice: currentSettings.kokoroVoice,
@@ -1234,7 +1653,8 @@ async function speakManualText(text) {
 
   addHistoryItemUI({
     id: manualId,
-    text: clean,
+    text: processed.displayText || processed.cleanText,
+    rawText: text,
     source: 'manual',
     timestamp: Date.now(),
   });
@@ -1242,7 +1662,14 @@ async function speakManualText(text) {
   // Persist to server history without re-queueing for pollers
   apiFetch('/api/speak', {
     method: 'POST',
-    body: { id: manualId, text: clean, rawText: text, source: 'manual', historyOnly: true },
+    body: {
+      id: manualId,
+      text: processed.displayText || processed.cleanText,
+      cleanText: processed.cleanText,
+      rawText: text,
+      source: 'manual',
+      historyOnly: true,
+    },
   }).catch(() => {});
 }
 
@@ -1251,6 +1678,10 @@ async function speakManualText(text) {
 // ---------------------------------------------------------------------------
 
 async function init() {
+  // Restore Antigravity host theme tokens if page was hard-reloaded, and snapshot once host styles settle
+  restoreThemeTokensIfMissing();
+  setTimeout(snapshotThemeTokens, 400);
+
   // Populate default voices immediately before async calls complete
   updateVoiceDropdown();
   updateCardSummaries();

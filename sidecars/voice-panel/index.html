@@ -23,6 +23,7 @@
         </div>
       </div>
       <div class="header-right">
+        <button id="btn-reload-panel" class="btn btn-sm btn-ghost" title="Reload Voice TTS panel UI">↻</button>
         <button id="btn-toggle-all-cards" class="btn btn-sm btn-ghost" title="Collapse or expand settings windows">Compact View</button>
         <div id="status-badge" class="badge idle">Ready</div>
       </div>
@@ -33,7 +34,7 @@
       <div class="card-header-row collapsible-header" title="Click to collapse or expand">
         <div class="card-title-group">
           <h2 class="card-title">Live Monitor & Transcript</h2>
-          <span class="version-pill" title="Antigravity Voice TTS v2.0.0">v2.0.0</span>
+          <span class="version-pill" title="Antigravity Voice TTS v2.1.0">v2.1.0</span>
         </div>
         <div class="card-header-actions">
           <div id="sentence-counter" class="sentence-counter">0 / 0</div>
@@ -50,7 +51,12 @@
         </div>
         <div class="caption-container">
           <div id="current-caption" class="caption-text">Idle — Waiting for speech...</div>
+          <div class="view-toggle-group" role="group" aria-label="Transcript text view">
+            <button id="btn-view-readable" class="view-toggle-btn active" title="Show clean readable text with original symbols while voice speaks normalized phrasing">Readable</button>
+            <button id="btn-view-spoken" class="view-toggle-btn" title="Show the exact normalized speech script sent to the TTS voice engine">Spoken</button>
+          </div>
         </div>
+        <div id="filter-stats-bar" class="filter-stats-bar hidden"></div>
         <div id="transcript-segments" class="transcript-segments" aria-label="Speech segments">
           <div class="transcript-placeholder">Speech text segments will appear here and highlight as they play. Click any segment to play from there.</div>
         </div>
@@ -206,12 +212,13 @@
       </div>
     </section>
 
-    <!-- Automation & Sanitizer Settings -->
+    <!-- Automation & Output Reading Filters -->
     <section class="card options-card" data-card-id="options">
       <div class="card-header-row collapsible-header" title="Click to collapse or expand">
-        <h2 class="card-title">Automation & Sanitizer</h2>
+        <h2 class="card-title">Reading Filters &amp; Automation</h2>
         <div class="card-header-actions">
-          <span id="summary-options" class="card-summary-pill">Auto-speak: On</span>
+          <button id="btn-reapply-filters" class="btn btn-sm btn-ghost" title="Re-apply current filters to the loaded transcript right now">↻ Re-apply</button>
+          <span id="summary-options" class="card-summary-pill">Balanced • Auto</span>
           <button class="btn-collapse-card" aria-label="Toggle section" title="Collapse / Expand">
             <svg class="chevron-icon" viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
               <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z"/>
@@ -232,27 +239,143 @@
           </div>
         </div>
 
-        <div class="toggle-row">
-          <label class="switch">
-            <input type="checkbox" id="chk-skip-code">
-            <span class="slider round"></span>
-          </label>
-          <div class="toggle-text">
-            <span class="toggle-title">Skip code blocks entirely</span>
-            <span class="toggle-desc">When disabled, code blocks are briefly summarized (e.g. "Here is JavaScript snippet")</span>
+        <!-- Reading Profile Presets -->
+        <div class="form-group">
+          <div class="label-row">
+            <label class="form-label">Reading Profile</label>
+            <span id="badge-custom-profile" class="custom-profile-badge hidden">Custom</span>
+          </div>
+          <div class="profile-grid" role="group" aria-label="Reading profiles">
+            <button type="button" class="profile-btn active" data-profile="balanced" title="Smart tables (read small, summarize large), concise code summaries, smooth symbols">Balanced</button>
+            <button type="button" class="profile-btn" data-profile="full" title="Hands-free room listening: reads all tables row-by-row, structure, callouts &amp; paths">Room Listen</button>
+            <button type="button" class="profile-btn" data-profile="prose" title="Fast listen: skips tables, code blocks, diagrams &amp; bare URLs">Prose Only</button>
+            <button type="button" class="profile-btn" data-profile="minimal" title="Light Markdown cleanup with minimal rewriting">Minimal</button>
+          </div>
+          <div id="profile-desc" class="hint-text">Smart tables (read small, summarize large), concise code summaries, smooth symbol &amp; math reading.</div>
+        </div>
+
+        <!-- Per-Content-Type Output Filter Grid -->
+        <div class="filter-grid">
+          <div class="filter-item">
+            <label for="filter-tables">Tables</label>
+            <select id="filter-tables" class="form-select form-select-sm">
+              <option value="smart">Smart (≤6×4)</option>
+              <option value="read">Read all rows</option>
+              <option value="summarize">Summarize</option>
+              <option value="skip">Skip</option>
+            </select>
+          </div>
+
+          <div class="filter-item">
+            <label for="filter-code">Code &amp; Diffs</label>
+            <select id="filter-code" class="form-select form-select-sm">
+              <option value="smart">Smart (short only)</option>
+              <option value="summarize">Summarize</option>
+              <option value="read">Read all</option>
+              <option value="skip">Skip</option>
+            </select>
+          </div>
+
+          <div class="filter-item">
+            <label for="filter-diagrams">Diagrams &amp; Trees</label>
+            <select id="filter-diagrams" class="form-select form-select-sm">
+              <option value="summarize">Summarize</option>
+              <option value="skip">Skip</option>
+            </select>
+          </div>
+
+          <div class="filter-item">
+            <label for="filter-math">Math &amp; LaTeX</label>
+            <select id="filter-math" class="form-select form-select-sm">
+              <option value="natural">Natural speech</option>
+              <option value="summarize">Summarize</option>
+              <option value="literal">Literal</option>
+              <option value="skip">Skip</option>
+            </select>
+          </div>
+
+          <div class="filter-item">
+            <label for="filter-urls">Links &amp; URLs</label>
+            <select id="filter-urls" class="form-select form-select-sm">
+              <option value="domain">Domain name</option>
+              <option value="skip">Skip bare URLs</option>
+              <option value="keep">Keep full</option>
+            </select>
+          </div>
+
+          <div class="filter-item">
+            <label for="filter-paths">File Paths</label>
+            <select id="filter-paths" class="form-select form-select-sm">
+              <option value="filename">Filename only</option>
+              <option value="natural">Natural path</option>
+              <option value="literal">Literal</option>
+              <option value="skip">Skip</option>
+            </select>
+          </div>
+
+          <div class="filter-item">
+            <label for="filter-symbols">Symbols &amp; Units</label>
+            <select id="filter-symbols" class="form-select form-select-sm">
+              <option value="natural">Natural speech</option>
+              <option value="minimal">Minimal</option>
+              <option value="literal">Literal</option>
+            </select>
+          </div>
+
+          <div class="filter-item">
+            <label for="filter-callouts">Callouts &amp; Quotes</label>
+            <select id="filter-callouts" class="form-select form-select-sm">
+              <option value="announce">Announce label</option>
+              <option value="read">Read text only</option>
+              <option value="skip">Skip</option>
+            </select>
           </div>
         </div>
 
-        <div class="toggle-row">
-          <label class="switch">
-            <input type="checkbox" id="chk-strip-urls" checked>
-            <span class="slider round"></span>
-          </label>
-          <div class="toggle-text">
-            <span class="toggle-title">Sanitize URLs & Tables</span>
-            <span class="toggle-desc">Replace long web links with spoken domain names and omit ASCII tables</span>
+        <!-- Collapsible Advanced & Custom Pronunciation Drawer -->
+        <details class="advanced-drawer" id="advanced-filters-drawer">
+          <summary>Advanced Filters &amp; Custom Pronunciation</summary>
+          <div class="advanced-drawer-body">
+            <div class="filter-grid">
+              <div class="filter-item">
+                <label for="filter-emojis">Emojis &amp; Icons</label>
+                <select id="filter-emojis" class="form-select form-select-sm">
+                  <option value="status">Status icons only</option>
+                  <option value="strip">Strip all</option>
+                  <option value="keep">Keep</option>
+                </select>
+              </div>
+              <div class="filter-item">
+                <label for="filter-structure">Headings &amp; Lists</label>
+                <select id="filter-structure" class="form-select form-select-sm">
+                  <option value="clean">Clean pauses</option>
+                  <option value="announce">Announce sections</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="compact-checks">
+              <label class="compact-check">
+                <input type="checkbox" id="chk-strip-citations" checked>
+                <span>Strip citations &amp; footnotes (<code>[1]</code>, <code>[^1]</code>)</span>
+              </label>
+              <label class="compact-check">
+                <input type="checkbox" id="chk-strip-hashes" checked>
+                <span>Omit long hex hashes &amp; UUIDs</span>
+              </label>
+              <label class="compact-check">
+                <input type="checkbox" id="chk-humanize-ids">
+                <span>Humanize <code>camelCase</code> &amp; <code>snake_case</code> identifiers</span>
+              </label>
+            </div>
+
+            <div class="form-group">
+              <label for="input-custom-rules" class="form-label">Custom Pronunciation &amp; Skip Rules</label>
+              <textarea id="input-custom-rules" class="form-textarea form-textarea-sm" rows="3" placeholder="kubectl => kube control&#10;Kokoro => Koh-koh-roh&#10;skip: DEBUG:"></textarea>
+              <div class="hint-text">One rule per line: <code>term =&gt; spoken</code> to customize pronunciation, or <code>skip: prefix</code> to omit matching lines.</div>
+            </div>
           </div>
-        </div>
+        </details>
       </div>
     </section>
 
@@ -273,9 +396,12 @@
         <textarea id="sandbox-input" class="form-textarea" rows="3" placeholder="Type or paste any text to test voice synthesis..."></textarea>
         
         <div class="sandbox-chips">
-          <button class="chip" data-text="Hello! Antigravity Voice sidecar is active and ready.">Greeting</button>
-          <button class="chip" data-text="I analyzed the code and found zero compilation errors.">Status</button>
-          <button class="chip" data-text="Kokoro neural speech running locally with WebGPU hardware acceleration.">Kokoro</button>
+          <button class="chip" data-preset="greeting">Greeting</button>
+          <button class="chip" data-preset="table">MD Table</button>
+          <button class="chip" data-preset="symbols">Symbols &amp; Ranges</button>
+          <button class="chip" data-preset="structured">Structured .md</button>
+          <button class="chip" data-preset="code">Code &amp; Paths</button>
+          <button class="chip" data-preset="math">Math &amp; Alert</button>
         </div>
 
         <div class="sandbox-actions">
@@ -348,14 +474,23 @@
         <div class="info-block">
           <h3 class="info-heading">How It Works</h3>
           <p>
-            <strong>Antigravity Voice TTS (v2.0.0)</strong> connects to Antigravity's turn lifecycle via a background <code>Stop</code> hook. When an assistant finishes a response, the text is sanitized (cleaning Markdown formatting, tables, URLs, and code blocks), split into natural sentence segments, and streamed to this sidecar panel for real-time speech synthesis.
+            <strong>Antigravity Voice TTS (v2.1.0)</strong> connects to Antigravity's turn lifecycle via a background <code>Stop</code> hook. When an assistant finishes a response, the smart output pipeline parses Markdown blocks (tables, headings, nested lists, code, diagrams, callouts, and LaTeX math), normalizes hard symbols for smooth speech, and streams balanced segments to this sidecar panel.
           </p>
+        </div>
+
+        <div class="info-block">
+          <h3 class="info-heading">Reading Filters &amp; Dual View</h3>
+          <ul class="info-list">
+            <li><strong>Readable vs. Spoken View:</strong> Shows clean <em>Readable</em> text with original symbols by default while speaking smooth normalized phrasing. Switch to <strong>Spoken</strong> anytime to preview the exact voice script.</li>
+            <li><strong>Reading Profiles:</strong> Pick <strong>Balanced</strong> (reads small tables, summarizes large ones), <strong>Room Listen</strong> (reads all tables, structure &amp; paths hands-free), <strong>Prose Only</strong> (skips tables, code &amp; diagrams), or <strong>Minimal</strong>—or fine-tune each type &amp; custom pronunciation rules in <em>Advanced</em>.</li>
+            <li><strong>On-Demand Expand &amp; Instant Re-apply:</strong> Click <strong>Read rows / Read lines ▶</strong> on any summarized block to hear it in full, click <strong>↻ Re-apply</strong> to update the active transcript right away after changing filters, or use <strong>↻</strong> in the top bar to reload the panel.</li>
+          </ul>
         </div>
 
         <div class="info-block">
           <h3 class="info-heading">Using It in Conversations</h3>
           <ul class="info-list">
-            <li><strong>Auto-Speak Live Responses:</strong> Keep <em>Auto-speak assistant turns</em> enabled in <strong>Automation &amp; Sanitizer</strong> to automatically hear new chat responses as soon as the agent finishes a turn.</li>
+            <li><strong>Auto-Speak Live Responses:</strong> Keep <em>Auto-speak assistant turns</em> enabled in <strong>Reading Filters &amp; Automation</strong> to automatically hear new chat responses as soon as the agent finishes a turn.</li>
             <li><strong>Interactive Segmented Reader:</strong> Below the spectrum visualizer, every sentence is numbered and highlighted as it plays. Click <strong>any segment</strong> in the reader to jump directly to that sentence.</li>
             <li><strong>Transport &amp; Repeat Controls:</strong> Use <strong>Back</strong> and <strong>Next</strong> to step between sentences, <strong>Play / Pause</strong> to pause mid-sentence, or cycle <strong>Repeat</strong> between <em>Off</em>, <em>Repeat: 1</em> (loop current sentence), and <em>Repeat: All</em> (loop entire response).</li>
             <li><strong>Listen to Past Conversations &amp; Artifacts:</strong> In <strong>Conversation Turns</strong>, the active chat is automatically detected (<code>★ [Current Chat]</code>), or you can pick any past conversation from the dropdown. Click <strong>Load</strong> on any turn or Markdown artifact (<code>📄 *.md</code>) to inspect its segments first, or click <strong>▶</strong> to listen immediately.</li>

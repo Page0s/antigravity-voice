@@ -10,7 +10,7 @@ import { request } from 'node:http';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chunkSentences, sanitizeText } from './sanitizer.mjs';
+import { processForSpeech } from './sanitizer.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = join(HERE, '..');
@@ -34,8 +34,9 @@ async function main() {
       const stepIndex = extracted?.stepIndex ?? null;
 
       if (lastResponseText && lastResponseText.trim()) {
-        // 3. Sanitize markdown and chunk into streaming sentences
-        const cleanText = sanitizeText(lastResponseText);
+        // 3. Sanitize markdown and chunk into streaming sentences using unified v2.1 pipeline
+        const processed = processForSpeech(lastResponseText);
+        const cleanText = processed.cleanText;
         if (cleanText) {
           // Check deduplication (prevent duplicate triggers for the same step or rapid repeats)
           const LAST_SENT_FILE = join(tmpdir(), 'antigravity-voice-last-sent.json');
@@ -51,7 +52,7 @@ async function main() {
             }
           } catch {}
 
-          const sentences = chunkSentences(cleanText);
+          const sentences = processed.segments.map((seg) => seg.spokenText);
           const speechItem = {
             id: `speech-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
             conversationId: conversationId || '',

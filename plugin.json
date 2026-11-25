@@ -1,7 +1,7 @@
 {
   "name": "antigravity-voice",
   "displayName": "Antigravity Voice",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Local neural Text-to-Speech (Kokoro-82M WebGPU) sidecar plugin for Google Antigravity with interactive segmented reader, transport & repeat controls, and conversation turn browser.",
   "author": {
     "name": "Page0s",

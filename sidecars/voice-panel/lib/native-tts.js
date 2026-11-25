@@ -84,7 +84,8 @@ $synth.Speak('${escapedText}')
 $synth.Dispose()
 `;
 
-  writeFileSync(ps1Path, script, 'utf8');
+  // Prepend UTF-8 BOM so Windows PowerShell 5.1 decodes Unicode (e.g. Č, Ö, –) cleanly instead of legacy ANSI
+  writeFileSync(ps1Path, `\uFEFF${script}`, 'utf8');
 
   return new Promise((resolve, reject) => {
     execFile(
@@ -147,7 +148,8 @@ $synth.Dispose()
 Remove-Item -Path '${ps1Path.replace(/\\/g, '/')}' -ErrorAction SilentlyContinue
 `;
 
-  writeFileSync(ps1Path, script, 'utf8');
+  // Prepend UTF-8 BOM so Windows PowerShell 5.1 decodes Unicode (e.g. Č, Ö, –) cleanly instead of legacy ANSI
+  writeFileSync(ps1Path, `\uFEFF${script}`, 'utf8');
 
   const child = spawn(
     'powershell.exe',

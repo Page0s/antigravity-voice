@@ -84,11 +84,46 @@ export class AudioQueueController {
   }
 
   /**
-   * Enqueue a full speech task (array of sentence strings or single string)
+   * Normalizes string or structured segment items into canonical segment objects.
+   */
+  _normalizeSegments(items) {
+    const list = Array.isArray(items) ? items : [items];
+    const valid = [];
+    for (const item of list) {
+      if (typeof item === 'string') {
+        const t = item.trim();
+        if (t) {
+          valid.push({
+            text: t,
+            spokenText: t,
+            displayText: t,
+            blockType: 'paragraph',
+            badge: '',
+            expandable: null,
+          });
+        }
+      } else if (item && typeof item === 'object') {
+        const spk = String(item.spokenText || item.text || '').trim();
+        if (spk) {
+          valid.push({
+            text: spk,
+            spokenText: spk,
+            displayText: String(item.displayText || spk).trim(),
+            blockType: item.blockType || 'paragraph',
+            badge: item.badge || '',
+            expandable: item.expandable || null,
+          });
+        }
+      }
+    }
+    return valid;
+  }
+
+  /**
+   * Enqueue a full speech task (array of segment objects or sentence strings)
    */
   enqueue(sentences, metadata = {}) {
-    const list = Array.isArray(sentences) ? sentences : [sentences];
-    const valid = list.map((s) => s.trim()).filter(Boolean);
+    const valid = this._normalizeSegments(sentences);
     if (valid.length === 0) return;
 
     const task = {
@@ -111,6 +146,36 @@ export class AudioQueueController {
         metadata,
       });
     }
+  }
+
+  /**
+   * Expands a summarized segment (e.g. large table or code block) in-place and starts playing it.
+   */
+  expandSegmentAt(index, { autoPlay = true } = {}) {
+    if (!this.currentTask || !Array.isArray(this.currentTask.sentences)) return false;
+    const idx = Number(index);
+    if (!Number.isInteger(idx) || idx < 0 || idx >= this.currentTask.sentences.length) return false;
+
+    const target = this.currentTask.sentences[idx];
+    const expandedRaw = target?.expandable?.segments;
+    if (!Array.isArray(expandedRaw) || expandedRaw.length === 0) return false;
+
+    const replacement = this._normalizeSegments(expandedRaw);
+    if (replacement.length === 0) return false;
+
+    this.currentTask.sentences.splice(idx, 1, ...replacement);
+    this.totalSentences = this.currentTask.sentences.length;
+
+    this.onTaskLoad({
+      sentences: this.currentTask.sentences,
+      activeIndex: autoPlay ? idx : -1,
+      metadata: this.currentTask.metadata,
+    });
+
+    if (autoPlay) {
+      this.jumpToSentence(idx);
+    }
+    return true;
   }
 
   async processNextTask() {
@@ -149,14 +214,20 @@ export class AudioQueueController {
         if (i < 0 || i >= sentences.length) break;
       }
 
+      const currentSeg = sentences[i];
+      const spokenStr = typeof currentSeg === 'string' ? currentSeg : currentSeg.spokenText || currentSeg.text;
+      const displayStr = typeof currentSeg === 'string' ? currentSeg : currentSeg.displayText || spokenStr;
+
       this.currentSentenceIndex = i;
-      this.currentText = sentences[i];
+      this.currentText = spokenStr;
 
       this.onProgress({
         index: i + 1,
         activeIndex: i,
         total: sentences.length,
-        text: sentences[i],
+        text: spokenStr,
+        displayText: displayStr,
+        segment: currentSeg,
         sentences,
         metadata: task.metadata,
       });
@@ -164,7 +235,7 @@ export class AudioQueueController {
       this.onStateChange(this.isPaused ? 'paused' : 'speaking');
 
       try {
-        await this.playSentence(sentences[i], task.metadata);
+        await this.playSentence(spokenStr, task.metadata);
       } catch (err) {
         console.error('Error playing sentence:', err);
       }

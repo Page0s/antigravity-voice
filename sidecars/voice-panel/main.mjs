@@ -9,7 +9,9 @@ import { homedir, platform, release, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Response, SidecarApp } from 'sidecar_sdk';
+import { buildClientBundle } from './lib/bundle.mjs';
 import { getInstalledVoices, synthesizeWav, speakDirect } from './lib/native-tts.js';
+import { DEFAULT_FILTER_OPTIONS, resolveFilterOptions } from './lib/pipeline/presets.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = process.env.ANTIGRAVITY_EXECUTABLE_DATA_DIR || join(HERE, '.data');
@@ -32,6 +34,8 @@ const DEFAULT_SETTINGS = {
   volume: 1.0,
   skipCodeBlocks: false,
   stripUrls: true,
+  transcriptView: 'readable', // 'readable' | 'spoken'
+  outputFilters: { ...DEFAULT_FILTER_OPTIONS },
   streamingSentenceChunks: true,
   idleUnloadMinutes: 10,
   collapsedCards: [],
@@ -63,29 +67,8 @@ const app = new SidecarApp();
 // ---------------------------------------------------------------------------
 const readLocal = (name) => readFileSync(join(HERE, name), 'utf8');
 
-/**
- * Strips static ES module import/export keywords from local files and bundles
- * them into a single classic script IIFE. This avoids Electron's `plugin://`
- * custom scheme failing with `net::ERR_FAILED` (HTTP 500) on `<script type="module">`.
- */
-function buildClientBundle() {
-  const stripModuleSyntax = (code) =>
-    code
-      .replace(/^\s*import\s+[\s\S]*?from\s+['"]\.\/[^'"]+['"];?\s*$/gm, '')
-      .replace(/^\s*export\s+(class|function|const|let|var)\s+/gm, '$1 ');
-
-  const parts = [
-    stripModuleSyntax(readLocal('lib/sanitizer.js')),
-    stripModuleSyntax(readLocal('lib/kokoro-tts.js')),
-    stripModuleSyntax(readLocal('lib/audio-queue.js')),
-    stripModuleSyntax(readLocal('app.js')),
-  ];
-
-  return `(function() {\n'use strict';\n${parts.join('\n\n')}\n})();\n`;
-}
-
 app.page('/', () => readLocal('index.html'));
-app.page('/app.js', () => buildClientBundle());
+app.page('/app.js', () => buildClientBundle(HERE));
 app.page('/lib/sanitizer.js', () => readLocal('lib/sanitizer.js'));
 app.page('/lib/audio-queue.js', () => readLocal('lib/audio-queue.js'));
 app.page('/lib/kokoro-tts.js', () => readLocal('lib/kokoro-tts.js'));
@@ -117,7 +100,15 @@ app.api('/api/settings', () => settings, 'GET');
 
 // POST /api/settings - Update preferences
 app.api('/api/settings', (data) => {
-  settings = { ...settings, ...data };
+  const incoming = data && typeof data === 'object' ? data : {};
+  const mergedFilters = incoming.outputFilters
+    ? resolveFilterOptions({ ...settings.outputFilters, ...incoming.outputFilters })
+    : settings.outputFilters;
+  settings = {
+    ...settings,
+    ...incoming,
+    outputFilters: mergedFilters,
+  };
   saveSettings();
   return { success: true, settings };
 });
@@ -278,7 +269,18 @@ app.api('/api/speak-direct', (data) => {
 function loadPersistedState() {
   if (existsSync(SETTINGS_FILE)) {
     try {
-      settings = { ...DEFAULT_SETTINGS, ...JSON.parse(readFileSync(SETTINGS_FILE, 'utf8')) };
+      const saved = JSON.parse(readFileSync(SETTINGS_FILE, 'utf8'));
+      const migratedFilters = saved.outputFilters
+        ? resolveFilterOptions(saved.outputFilters)
+        : resolveFilterOptions({
+            skipCodeBlocks: saved.skipCodeBlocks,
+            stripUrls: saved.stripUrls,
+          });
+      settings = {
+        ...DEFAULT_SETTINGS,
+        ...saved,
+        outputFilters: migratedFilters,
+      };
     } catch (e) {
       console.error('Failed to load settings:', e);
     }
@@ -333,11 +335,13 @@ function saveSettings() {
 
 function addToHistory(item) {
   const text = String(item.text || item.cleanText || item.rawText || '').trim();
+  const rawText = String(item.rawText || text).trim();
   if (!text) return;
   if (speechHistory.some((h) => h.id === item.id)) return;
   speechHistory.push({
     id: item.id,
     text,
+    rawText,
     source: item.source || 'unknown',
     timestamp: item.timestamp || Date.now(),
   });

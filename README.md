@@ -1,6 +1,6 @@
-# Antigravity Voice TTS (`v2.0.0`)
+# Antigravity Voice TTS (`v2.1.0`)
 
-> **Local Neural Text-to-Speech Sidecar Plugin for Google Antigravity** — powered by **Kokoro-82M** (WebGPU / WASM) and native OS speech synthesis, featuring an interactive segmented transcript reader, full transport & repeat modes, past conversation & artifact browser, and smart VRAM auto-unloading.
+> **Local Neural Text-to-Speech Sidecar Plugin for Google Antigravity** — powered by **Kokoro-82M** (WebGPU / WASM) and native OS speech synthesis, featuring a **smart Markdown & model-output filter pipeline**, **Dual Readable / Spoken transcript view**, **Reading Profiles (Balanced, Room Listen, Prose Only, Minimal)**, on-demand table/code expansion, transport & repeat controls, conversation turn browser, and smart VRAM auto-unloading.
 
 ---
 
@@ -34,8 +34,19 @@ Voice TTS Sidecar Panel (WebGPU + Web Audio API)
 
 ---
 
-## ✨ Key Features in v2.0.0
+## ✨ Key Features in v2.1.0
 
+- **🎛️ Smart Model-Output Filter Engine & Reading Profiles**
+  - **4 Quick-Switch Profiles** plus per-content-type controls for **Tables**, **Code & Diffs**, **Diagrams & ASCII Trees**, **Math & LaTeX**, **Links & URLs**, **File Paths**, **Symbols & Units**, **Callouts & Quotes**, **Emojis**, **Citations**, **UUIDs/Hashes**, and **Custom Pronunciation / Skip Rules**:
+    - **Balanced (Default):** Smart tables (reads small tables ≤ 6×4 naturally row-by-row; summarizes large tables with headers), concise code summaries, natural LaTeX & symbol expansion.
+    - **Room Listen (Hands-Free):** Reads all tables row-by-row, announces structure & callouts, and speaks paths thoroughly for listening away from the screen.
+    - **Prose Only:** Skips tables, code blocks, diagrams, and bare URLs for fast listening.
+    - **Minimal:** Light Markdown cleanup with minimal rewriting.
+  - **On-Demand Expand (`Read rows ▶` / `Read lines ▶`):** Summarized large tables, diffs, code blocks, or formulas include an inline expand button right in the Live Monitor transcript to unfold and speak them anytime.
+- **👁️ Dual Readable / Spoken Transcript View + Orphan-Free Chunking**
+  - Shows clean **Readable** text with original symbols on screen by default while sending smooth normalized speech (`a–z` → *"a to z"*, `Ctrl+C` → *"Control plus C"*, `~150ms` → *"about 150 milliseconds"*, `→` → *"to"*) to Kokoro-82M.
+  - Toggle to **Spoken** anytime to inspect the exact normalized speech script.
+  - Block-aware, parenthesis-safe balanced sentence chunking prevents mid-parenthesis splits and single-word orphan rows.
 - **🧠 Local Kokoro-82M Neural Audio (WebGPU & WASM)**
   - Runs [`onnx-community/Kokoro-82M-v1.0-ONNX`](https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX) directly inside Antigravity's sidecar pane using WebGPU (`fp32`) with automatic quantized WASM (`q8`) fallback.
   - Zero cloud API keys, zero external Python servers, and automatic local `CacheStorage` persistence after the first download.
@@ -73,22 +84,31 @@ antigravity-voice/
 │   └── logo.svg                # Plugin icon
 ├── hooks/
 │   ├── notify-tts.mjs          # Extracts latest assistant turn & dispatches to sidecar
-│   └── sanitizer.mjs           # Server-side Markdown/code/URL/LaTeX sanitizer & chunker
+│   └── sanitizer.mjs           # Re-export facade to the single canonical text pipeline
 ├── sidecars/
 │   └── voice-panel/
 │       ├── sidecar.json        # Declares AUX_PANE web UI
 │       ├── package.json        # Sidecar ES module manifest
-│       ├── main.mjs            # SidecarApp server, classic-script bundler & transcript API
-│       ├── index.html          # Collapsible UI layout, visualizer & user guide
+│       ├── main.mjs            # SidecarApp server, settings & transcript API
+│       ├── index.html          # Collapsible UI layout, Reading Filters & user guide
 │       ├── styles.css          # Antigravity theme-aware styles
-│       ├── app.js              # Frontend controller
+│       ├── app.js              # Frontend controller & live re-filtering
 │       └── lib/
-│           ├── sanitizer.js    # Client-side sanitizer & sentence chunker
-│           ├── audio-queue.js  # Web Audio API queue, segment navigation & repeat modes
+│           ├── bundle.mjs      # Classic-script IIFE bundler for plugin:// compatibility
+│           ├── sanitizer.js    # Pipeline orchestrator & processForSpeech API
+│           ├── pipeline/       # Modular zero-dependency output filters
+│           │   ├── presets.js          # Reading profiles & custom rules parser
+│           │   ├── block-parser.js     # Typed Markdown/HTML/callout/tree block parser
+│           │   ├── table-reader.js     # Adaptive 2-col & multi-col table linearizer
+│           │   ├── code-handler.js     # Code, diff, Mermaid & ASCII tree handler
+│           │   ├── math-reader.js      # LaTeX-to-English speech converter
+│           │   ├── inline-normalizer.js# Dual display/spoken symbol, path & URL normalizer
+│           │   └── chunker.js          # Balanced, parenthesis-safe, orphan-free chunker
+│           ├── audio-queue.js  # Web Audio API queue, expand-in-place & repeat modes
 │           ├── kokoro-tts.js   # Kokoro-82M WebGPU/WASM loader & memory manager
-│           └── native-tts.js   # Native OS WAV synthesis & SAPI voice discovery
+│           └── native-tts.js   # Native OS WAV synthesis (UTF-8 BOM safe) & SAPI voices
 └── test/
-    └── sanitizer.test.mjs      # 16-test verification suite
+    └── sanitizer.test.mjs      # 20-suite pipeline, regression & bundle verification suite
 ```
 
 ---
